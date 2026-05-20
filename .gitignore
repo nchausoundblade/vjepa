@@ -1,2 +1,4 @@
 .*.swp
 *.pyc
+v_jepa_env/
+.DS_Store
