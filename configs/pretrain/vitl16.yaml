@@ -1,20 +1,20 @@
 app: vjepa
-nodes: 16
-tasks_per_node: 8
+nodes: 1
+tasks_per_node: 1
 data:
   dataset_type: VideoDataset
   datasets:
     - /Users/noahchau/Desktop/vjepa_dataset.csv
   decode_one_clip: true
-  batch_size: 24
+  batch_size: 1
   num_clips: 1
   num_frames: 16
   tubelet_size: 2
   sampling_rate: 4
   crop_size: 224
   patch_size: 16
-  pin_mem: true
-  num_workers: 12
+  pin_mem: false
+  num_workers: 2
   filter_short_videos: false
   clip_duration: null
 data_aug:
@@ -28,8 +28,8 @@ data_aug:
   - 1.0
   reprob: 0.0
 logging:
-  folder: /your_absolute_file_path_for_saving_logs_and_checkpoints/
-  write_tag: jepa
+  folder: /Users/noahchau/Desktop/vjepa_logs/
+  write_tag: vjepa
 loss:
   loss_exp: 1.0
   reg_coeff: 0.0
@@ -73,7 +73,7 @@ model:
   use_mask_tokens: true
   zero_init_mask_tokens: true
 optimization:
-  ipe: 300
+  ipe: 8
   ipe_scale: 1.25
   clip_grad: 10.0
   weight_decay: 0.04
