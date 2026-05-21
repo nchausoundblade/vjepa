@@ -52,7 +52,7 @@ from app.vjepa.transforms import make_transforms
 # --
 log_timings = True
 log_freq = 10
-checkpoint_freq = 1
+checkpoint_freq = 10
 # --
 
 _GLOBAL_SEED = 0
@@ -293,10 +293,18 @@ def main(args, resume_preempt=False):
         mixed_precision=mixed_precision,
         betas=betas,
         eps=eps)
-    if dist.is_available() and dist.is_initialized():
-        encoder = DistributedDataParallel(encoder, static_graph=True)
-    else: 
-        print ("running in single-devide mode; bypassing DDP wrapper)")
+    
+    # Force a dummy single-device distributed environment using the macOS-compatible 'gloo' backend
+    if not dist.is_initialized():
+        print("Initializing dummy local process group for macOS...")
+        dist.init_process_group(
+            backend='gloo',
+            init_method='tcp://localhost:23456',
+            rank=0,
+            world_size=1
+    )
+    
+    encoder = DistributedDataParallel(encoder, static_graph=True)
     predictor = DistributedDataParallel(predictor, static_graph=True)
     target_encoder = DistributedDataParallel(target_encoder)
     for p in target_encoder.parameters():
