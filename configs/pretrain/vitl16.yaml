@@ -64,7 +64,7 @@ meta:
   seed: 234
   eval_freq: 100
   use_sdpa: true
-  dtype: bfloat16
+  dtype: float32
 model:
   model_name: vit_large
   pred_depth: 12
