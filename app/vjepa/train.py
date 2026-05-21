@@ -24,6 +24,7 @@ import numpy as np
 import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
+import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
 
 from src.datasets.data_manager import init_data
@@ -292,7 +293,10 @@ def main(args, resume_preempt=False):
         mixed_precision=mixed_precision,
         betas=betas,
         eps=eps)
-    encoder = DistributedDataParallel(encoder, static_graph=True)
+    if dist.is_available() and dist.is_initialized():
+        encoder = DistributedDataParallel(encoder, static_graph=True)
+    else: 
+        print ("running in single-devide mode; bypassing DDP wrapper)")
     predictor = DistributedDataParallel(predictor, static_graph=True)
     target_encoder = DistributedDataParallel(target_encoder)
     for p in target_encoder.parameters():
