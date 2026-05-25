@@ -1,21 +1,26 @@
+import sys
 import os
+
+# 1. CRITICAL: Force Python to see the V-JEPA root directory so 'src' works
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 import torch
 import numpy as np
 import pandas as pd
+import av  # Modern alternative to the deprecated torchvision.io.read_video
 from torch.utils.data import Dataset, DataLoader
 from torchvision.transforms import Compose, Resize, CenterCrop, Normalize
 
-# Assuming the V-JEPA repo is in your python path, we import their ViT backbone
-# If you run this script from the root directory of the cloned repo, this works natively.
-from src.models.vit import vit_large 
+# Import Meta's vision transformer architecture 
+import src.models.vision_transformer as vit
 
 # -------------------------------------------------------------------------
 # 1. SIMPLE VIDEO DATALOADER FOR ULTRASOUND CINE SWEEPS
 # -------------------------------------------------------------------------
 class UltrasoundVideoDataset(Dataset):
     """
-    A lightweight dataset class that reads the V-JEPA formatted CSV
-    and loads video frames into memory.
+    An updated dataset class that reads ultrasound sweeps using PyAV,
+    bypassing the deprecated and removed torchvision.io.read_video function.
     """
     def __init__(self, csv_path, transform=None, num_frames=16):
         # Reads standard space-separated or comma-separated CSV: [path label]
@@ -30,27 +35,41 @@ class UltrasoundVideoDataset(Dataset):
         video_path = self.df.iloc[idx]['path']
         label = self.df.iloc[idx]['label']
         
-        # Using torchvision to read video frames dynamically
-        import torchvision.io as io
-        # video shape: (T, H, W, C)
-        video, _, _ = io.read_video(video_path, pts_unit='sec', output_format='TCHW')
-        
-        if len(video) == 0:
-            raise FileNotFoundError(f"Could not read video or video is empty: {video_path}")
+        # Open video container with PyAV
+        try:
+            container = av.open(video_path)
+        except Exception as e:
+            raise FileNotFoundError(f"Could not open video: {video_path}. Error: {e}")
             
-        # Downsample or pad video along the time dimension to get exactly `num_frames`
+        frames = []
+        # Extract all video frames as standard numpy arrays
+        for frame in container.decode(video=0):
+            # Convert PyAV frame to an RGB numpy array
+            img = frame.to_ndarray(format='rgb24')
+            # Convert to PyTorch tensor format: (Channels, Height, Width)
+            img_tensor = torch.from_numpy(img).permute(2, 0, 1)
+            frames.append(img_tensor)
+            
+        container.close()
+        
+        if len(frames) == 0:
+            raise ValueError(f"Video contains 0 decoded frames: {video_path}")
+            
+        # Convert list of tensors into a single video tensor: (Total_Frames, C, H, W)
+        video = torch.stack(frames)
+        
+        # Downsample or pad video uniformly along the time dimension to get exactly `num_frames`
         total_frames = video.size(0)
         indices = np.linspace(0, total_frames - 1, self.num_frames, dtype=int)
         video = video[indices] # Shape: (num_frames, C, H, W)
 
         # Apply spatial transformations frame by frame
         if self.transform:
-            # Reframe for transform: list of frames -> tensor
+            # Scale uint8 values to float [0, 1] matching V-JEPA requirements
             transformed_frames = [self.transform(frame.float() / 255.0) for frame in video]
             video = torch.stack(transformed_frames) # Shape: (T, C, H, W)
             
-        # V-JEPA expects video tensors shaped as (B, C, T, H, W)
-        # We permute (T, C, H, W) -> (C, T, H, W)
+        # V-JEPA expects video tensors shaped as (C, T, H, W) internally 
         video = video.permute(1, 0, 2, 3)
         
         return video, label, video_path
@@ -60,7 +79,7 @@ class UltrasoundVideoDataset(Dataset):
 # -------------------------------------------------------------------------
 def main():
     # Set your paths here
-    CSV_PATH = "/Users/noahchau/Desktop/vjepa_dataset.csv"  # Path to your list of 41 videos
+    CSV_PATH = "vjepa_dataset.csv"  # Path to your list of 41 videos
     CHECKPOINT_PATH = "/Users/noahchau/Desktop/vitl16.pth.tar" # Path to checkpoint
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
@@ -81,12 +100,12 @@ def main():
     # 3. INITIALIZE BACKBONE AND LOAD WEIGHTS
     # -------------------------------------------------------------------------
     print("Initializing ViT-Large backbone...")
-    # Initialize the architecture matching Meta's ViT-L setup
-    model = vit_large(
+    # Initialize the architecture using Meta's dictionary registry lookup
+    model = vit.__dict__['vit_large'](
         img_size=224,
         patch_size=16,
         num_frames=16,
-        tubelet_size=2 # Spatial-temporal patch dimension default for V-JEPA
+        tubelet_size=2
     )
 
     print(f"Loading weights from {CHECKPOINT_PATH}...")
@@ -107,7 +126,7 @@ def main():
     print(f"Checkpoint loaded status: {msg}")
     
     model = model.to(DEVICE)
-    model.eval() # Force Evaluation Mode (turns off dropout, batchnorm tracking, etc.)
+    model.eval() # Force Evaluation Mode
 
     # -------------------------------------------------------------------------
     # 4. LOOP & FEATURE EXTRACTION
@@ -118,13 +137,11 @@ def main():
 
     print(f"Extracting features from {len(dataset)} ultrasound sweeps...")
     
-    # torch.no_grad() disables gradient calculation entirely, saving massive amounts of memory
     with torch.no_grad():
         for videos, labels, paths in dataloader:
             videos = videos.to(DEVICE) # Shape: (1, 3, 16, 224, 224)
             
             # Forward pass through the transformer backbone
-            # Output is a high-dimensional feature map representation
             features = model(videos) 
             
             # Global Average Pooling over the tokens/patches to reduce down to a single 1D vector per video
@@ -145,11 +162,11 @@ def main():
     print(f"Extraction Complete! Generated shape matrix: {all_embeddings.shape}")
 
     # -------------------------------------------------------------------------
-    # 5. SAVE MATRIX DATA
+    # 5. SAVE MATRIX DATA DIRECTLY TO DESKTOP
     # -------------------------------------------------------------------------
     np.save("/Users/noahchau/Desktop/ultrasound_embeddings.npy", all_embeddings)
     np.save("/Users/noahchau/Desktop/ultrasound_labels.npy", all_labels)
-    print("Saved 'ultrasound_embeddings.npy' and 'ultrasound_labels.npy' to disk. Ready for t-SNE/UMAP!")
+    print("Saved 'ultrasound_embeddings.npy' and 'ultrasound_labels.npy' to Desktop. Ready for t-SNE/UMAP!")
 
 if __name__ == "__main__":
     main()
