@@ -8,17 +8,17 @@ from sklearn.manifold import trustworthiness
 # =========================================================================
 # CONFIGURATION SETTINGS
 # =========================================================================
-# Which metadata category do you want to color the dots by?
+# Which metadata category do you want to colour the dots by?
 # Options: 'Diagnosis', 'Study', 'Sweep_Number', 'US_Model', 'US_Generation', 
 #          'Photometric_Mode', 'Frame_Range', 'FPS_Range', 'Angle'
-COLOR_BY = 'Angle'  # Change this to experiment with different metadata groupings
+COLOR_BY = 'Study'  
 
 # UMAP Hyperparameters
 n_neighbors_val = 3
-min_dist_val = 0.01
+min_dist_val = 0.05
 n_components_val = 2
 metric_val = 'cosine'  # 'euclidean', 'manhattan', 'cosine', etc.
-seed_val = 42
+seed_val = 50
 
 
 def main():
@@ -154,14 +154,11 @@ def main():
     # Apply specialized grouping logic ONLY when analyzing the 'Angle' category
     if COLOR_BY == 'Angle':
         # A. Force the Legend Sorting Order
-        # This keeps your transverse scans grouped right next to each other
         custom_orders = {
             'Angle': ['RT-TRV', 'LT-TRV', 'ML-TRV', 'RT-SAG', 'LT-SAG', 'TBD', 'Unknown']
         }
 
     # B. Map Cohesive, High-Contrast Color Palettes
-        # Transverse views get distinct shades of blue/teal. 
-        # Sagittal views get high-contrast warm colors (oranges/reds).
         custom_color_map = {
             'RT-TRV': '#002f6c',       # Deep Navy Blue
             'LT-TRV': '#1f77b4',       # Standard Bright Blue
@@ -172,6 +169,27 @@ def main():
             'TBD': '#7f7f7f',          # Muted Slate Gray (For your un-evaluated files)
             'Unknown': '#bcbd22'       # Olive Green
         }
+
+    elif COLOR_BY == 'Study':
+        custom_orders = {
+            'Study': ['study0', 'study1', 'study2', 'study3', 'study4', 'study5', 'study6', 'study7', 'study8', 'study9', 'study10']
+        }
+        custom_color_map = {
+            'study0': "#4e0808",
+            'study1': "#b41f1f",
+            'study2': '#ff7f0e', 
+            'study3': "#d9dd22",
+            'study4': "#27d644", 
+            'study5': "#1B6738", 
+            'study5': "#1fbdba",
+            'study6': "#1a75a7", 
+            'study7': "#4f36de",
+            'study8': "#a830df",
+            'study9': "#a11d87",
+            'study10': "#e6759a",
+        }
+
+
 
     # If you want to customize other views later (like machines), you can add another 'elif' block here:
     elif COLOR_BY == 'Diagnosis':
@@ -200,10 +218,32 @@ def main():
         hoverlabel=dict(bgcolor="white", font_size=13, font_family="Arial")
     )
 
-    # 7. Optimized Light Web Deployment Output
-    fig.show()
-    fig.write_html("interactive_umap_map.html", include_plotlyjs='cdn')
-    print(f"Successfully generated map! Grouped visualizations mapped to: '{COLOR_BY}'.")
+    # 7. Optimized Output Settings with Dynamic Metadata Filenames
+    # Construct a clean, structured filename for the downloaded image
+    download_filename = (
+        f"umap_{COLOR_BY}_"
+        f"neighbors{n_neighbors_val}_"
+        f"mindist{min_dist_val}_"
+        f"{metric_val}_"
+        f"seed{seed_val}_"
+        f"InfoLoss{(1.0 - trust_score) * 100:.1f}%"
+    )
 
+    export_config = {
+        'toImageButtonOptions': {
+            'format': 'png',
+            'filename': download_filename, # Applies the dynamic string
+            'height': 1080,            
+            'width': 1920,             
+            'scale': 3                 # Keeps the 3x crisp sharpness multiplier
+        }
+    }
+
+    # Pass the config block directly into the show function
+    fig.show(config=export_config)
+    
+    # Keeps your web export active
+    fig.write_html("interactive_umap_map.html", include_plotlyjs='cdn')
+    print(f"Successfully generated map! Image download configured as: '{download_filename}.png'")
 if __name__ == "__main__":
     main()
