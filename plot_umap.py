@@ -11,24 +11,43 @@ from sklearn.manifold import trustworthiness
 # Which metadata category do you want to colour the dots by?
 # Options: 'Diagnosis', 'Study', 'Sweep_Number', 'US_Model', 'US_Generation', 
 #          'Photometric_Mode', 'Frame_Range', 'FPS_Range', 'Angle'
-COLOR_BY = 'Study'  
+COLOR_BY = 'Photometric_Mode'  
 
 # UMAP Hyperparameters
-n_neighbors_val = 3
-min_dist_val = 0.05
+n_neighbors_val = 5
+min_dist_val = 0.1
 n_components_val = 2
-metric_val = 'cosine'  # 'euclidean', 'manhattan', 'cosine', etc.
-seed_val = 50
+metric_val = 'manhattan'  # 'euclidean', 'manhattan', 'cosine', etc.
+seed_val = 10
 
 
 def main():
 
-    # 1. Load the generated matrices
+    # --- CHANGE THIS TO MATCH THE EMBEDDINGS YOU WANT TO LOAD ---
+    MODEL_TYPE = 'ViT-H-384'  # Options: 'ViT-L', 'ViT-H', 'ViT-H-384'
+
+    # 1. Load the generated matrices dynamically
     try:
-        embeddings = np.load("/Users/noahchau/Desktop/ultrasound_embeddings.npy")
-        labels = np.load("/Users/noahchau/Desktop/ultrasound_labels.npy")
+        embeddings = np.load(f"/Users/noahchau/Desktop/ultrasound_embeddings_{MODEL_TYPE}.npy")
+        labels = np.load(f"/Users/noahchau/Desktop/ultrasound_labels_{MODEL_TYPE}.npy")
+
+        n_samples, feature_dim = embeddings.shape
+        print(f"Loaded {n_samples} embeddings with feature dimension size: {feature_dim}")
+        
+        # Automated Native Architecture Identification Profile Engine
+        if feature_dim == 1024:
+            ARCHITECTURE = "V-JEPA (ViT-L)"
+        elif feature_dim == 1280:
+            ARCHITECTURE = "V-JEPA (ViT-H)"
+        elif feature_dim == 768:
+            ARCHITECTURE = "V-JEPA (ViT-B)"
+        else:
+            ARCHITECTURE = f"Custom-Net (Dim-{feature_dim})"
+            
+        print(f"🤖 Auto-detected Backbone Profile: {ARCHITECTURE}")
+        
     except FileNotFoundError:
-        print("Error: Could not find .npy files. Run 'extract_embeddings.py' first!")
+        print(f"Error: Could not find .npy files for {MODEL_TYPE}. Run 'extract_embeddings.py' first!")
         return
 
 

@@ -171,7 +171,7 @@ def main():
                 plot_df['UMAP Y'] = embeddings_2d[:, 1]
 
                 umap_settings_title = (
-                    f"<b>{ARCHITECTURE}</b> Latent Space Map Archetype: <b>{exp['name']}</b><br>"
+                    f"<b>{MODEL_TYPE}</b> Latent Space Map Archetype: <b>{exp['name']}</b><br>"
                     f"<sub><b>Colored By:</b> {color_col} | <b>n_neighbors:</b> {exp['neighbors']} | "
                     f"<b>min_dist:</b> {exp['min_dist']} | <b>metric:</b> {exp['metric']} | <b>seed:</b> {seed}</sub><br>"
                     f"<sub><i><b>Approximate Information Loss:</b> {info_loss_pct:.1f}%</i></sub>"
@@ -254,7 +254,7 @@ def main():
 
                 fig.update_traces(marker=dict(size=16, line=dict(width=1.5, color='DarkSlateGrey')))
 
-                export_filename = f"{ARCHITECTURE}_grid_{color_col}_{exp['name']}_n{exp['neighbors']}_s{seed}"
+                export_filename = f"{MODEL_TYPE}_{exp['name']}_grid_{color_col}_n{exp['neighbors']}_s{seed}"
 
                 # FIXED: Restored the automatic browser-open engine step
                 fig.show(config={
