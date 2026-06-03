@@ -1,4 +1,5 @@
 import os
+import sys
 import numpy as np
 import pandas as pd
 import umap
@@ -6,16 +7,56 @@ import plotly.express as px
 from sklearn.manifold import trustworthiness
 
 def main():
-    # --- CHANGE THIS TO MATCH THE EMBEDDINGS YOU WANT TO LOAD ---
-    MODEL_TYPE = 'ViT-H-384'  # Options: 'ViT-L', 'ViT-H', 'ViT-H-384'
+    # --- AUTOMATIC ARCHITECTURE DISCOVERY & PROMPT ---
+    CHECKPOINT_DIR = "/Users/noahchau/Desktop/V-JEPA/Model-Checkpoints/"
+    EMBEDDINGS_DIR = "/Users/noahchau/Desktop/V-JEPA/Embeddings-and-Labels/"
+    CSV_PATH = "/Users/noahchau/Desktop/V-JEPA/jepa/vjepa_dataset.csv"
+    output_dir = "/Users/noahchau/Desktop/V-JEPA/umap_batch_results"
+
+    # Map file strings exactly as they exist in your Model-Checkpoints folder
+    FILENAME_TO_MODEL = {
+        "vith16-384.pth.tar": "ViT-H-384",
+        "vith16.pth.tar": "ViT-H",
+        "vitl16.pth.tar": "ViT-L"
+    }
+    
+    found_checkpoints = {}
+    if os.path.exists(CHECKPOINT_DIR):
+        for filename in os.listdir(CHECKPOINT_DIR):
+            if filename in FILENAME_TO_MODEL:
+                model_key = FILENAME_TO_MODEL[filename]
+                found_checkpoints[model_key] = os.path.join(CHECKPOINT_DIR, filename)
+    
+    VALID_MODELS = sorted(list(found_checkpoints.keys()))
+
+    # Dynamic fallback script guardrail
+    if not VALID_MODELS:
+        print(f"⚠️ Warning: Checkpoint files not detected inside {CHECKPOINT_DIR}")
+        print("Defaulting validation parameters to standard specifications.")
+        VALID_MODELS = ['ViT-L', 'ViT-H', 'ViT-H-384']
+
+    print("Available V-JEPA models discovered:", ", ".join(VALID_MODELS))
+    while True:
+        user_input = input(f"Enter MODEL_TYPE to plot (default '{VALID_MODELS[0]}'): ").strip()
+        if not user_input:
+            MODEL_TYPE = VALID_MODELS[0]
+            break
+        elif user_input in VALID_MODELS:
+            MODEL_TYPE = user_input
+            break
+        print(f"❌ Invalid choice. Choose from discovered matrix variants: {VALID_MODELS}")
+
+    # Build exact paths for your matrix layers inside the Embeddings-and-Labels folder
+    embedding_file_path = os.path.join(EMBEDDINGS_DIR, f"ultrasound_embeddings_{MODEL_TYPE}.npy")
+    label_file_path = os.path.join(EMBEDDINGS_DIR, f"ultrasound_labels_{MODEL_TYPE}.npy")
 
     # 1. Load the generated matrices dynamically
     try:
-        embeddings = np.load(f"/Users/noahchau/Desktop/ultrasound_embeddings_{MODEL_TYPE}.npy")
-        labels = np.load(f"/Users/noahchau/Desktop/ultrasound_labels_{MODEL_TYPE}.npy")
+        embeddings = np.load(embedding_file_path)
+        labels = np.load(label_file_path)
 
         n_samples, feature_dim = embeddings.shape
-        print(f"Loaded {n_samples} embeddings with feature dimension size: {feature_dim}")
+        print(f"\nLoaded {n_samples} embeddings with feature dimension size: {feature_dim}")
         
         # Automated Native Architecture Identification Profile Engine
         if feature_dim == 1024:
@@ -30,15 +71,17 @@ def main():
         print(f"🤖 Auto-detected Backbone Profile: {ARCHITECTURE}")
         
     except FileNotFoundError:
-        print(f"Error: Could not find .npy files for {MODEL_TYPE}. Run 'extract_embeddings.py' first!")
+        print(f"\n❌ Error: Could not find matrix records for {MODEL_TYPE}.")
+        print(f"Looked for files:\n -> {embedding_file_path}\n -> {label_file_path}")
+        print("Run your unified extraction script first!")
         return
 
     # 2. Extract filenames and parse metadata
     try:
-        df_csv = pd.read_csv("vjepa_dataset.csv", sep=r'\s+|,', names=['path', 'label'], engine='python')
+        df_csv = pd.read_csv(CSV_PATH, sep=r'\s+|,', names=['path', 'label'], engine='python')
         filenames = [os.path.basename(p) for p in df_csv['path']]
     except FileNotFoundError:
-        print("Error: Could not find 'vjepa_dataset.csv'.")
+        print(f"❌ Error: Could not find dataset records at {CSV_PATH}.")
         return
 
     diagnoses = ["Abnormal" if label == 1 else "Normal" for label in labels]
@@ -47,9 +90,14 @@ def main():
     studies, sweep_numbers, us_models, us_generations = [], [], [], []
     photometrics, frame_ranges, fps_ranges, angles = [], [], [], []
 
-    # 3. Parse the strict 8-part naming layout
+    # 3. Parse the strict naming layout, ignoring "cropped_" if present
     for name in filenames:
         clean_name = os.path.splitext(name)[0]
+        
+        # FIX: Check if the filename starts with 'cropped_' and strip it off to preserve index structural alignment
+        if clean_name.startswith("cropped_"):
+            clean_name = clean_name[len("cropped_"):]
+            
         parts = clean_name.split('_')
         
         if len(parts) >= 8:
@@ -107,6 +155,11 @@ def main():
     # =========================================================================
     experiments = [
         {
+            "name": "Clinical_Ideal",
+            "neighbors": 7, "min_dist": 0.25, "metric": "cosine", "seeds": [1, 100],
+            "colors": ["Diagnosis", "Angle"]
+        },
+        {
             "name": "Local_Cluster",
             "neighbors": 3, "min_dist": 0.05, "metric": "cosine", "seeds": [80, 85],
             "colors": ["Study", "Angle"]
@@ -122,11 +175,6 @@ def main():
             "colors": ["FPS_Range", "Frame_Range"] 
         },
         {
-            "name": "Clinical_Ideal",
-            "neighbors": 7, "min_dist": 0.25, "metric": "cosine", "seeds": [1, 100],
-            "colors": ["Diagnosis", "Angle"]
-        },
-        {
             "name": "Pixel_Noise_Grid",
             "neighbors": 5, "min_dist": 0.1, "metric": "manhattan", "seeds": [10, 20],
             "colors": ["Photometric_Mode", "Angle"]
@@ -138,7 +186,6 @@ def main():
         }
     ]
 
-    output_dir = "umap_batch_results"
     os.makedirs(output_dir, exist_ok=True)
 
     total_runs = sum(len(exp["seeds"]) * len(exp["colors"]) for exp in experiments)
@@ -203,17 +250,9 @@ def main():
                         'Study': ['study0', 'study1', 'study2', 'study3', 'study4', 'study5', 'study6', 'study7', 'study8', 'study9', 'study10']
                     }
                     custom_color_map = {
-                        'study0': "#4e0808",
-                        'study1': "#b41f1f",
-                        'study2': '#ff7f0e', 
-                        'study3': "#d9dd22",
-                        'study4': "#27d644", 
-                        'study5': "#1fbdba", 
-                        'study6': "#1a75a7", 
-                        'study7': "#4f36de",
-                        'study8': "#a830df",
-                        'study9': "#a11d87",
-                        'study10': "#e6759a",
+                        'study0': "#4e0808", 'study1': "#b41f1f", 'study2': '#ff7f0e', 'study3': "#d9dd22",
+                        'study4': "#27d644", 'study5': "#1fbdba", 'study6': "#1a75a7", 'study7': "#4f36de",
+                        'study8': "#a830df", 'study9': "#a11d87", 'study10': "#e6759a"
                     }
 
                 fig = px.scatter(
@@ -256,7 +295,6 @@ def main():
 
                 export_filename = f"{MODEL_TYPE}_{exp['name']}_grid_{color_col}_n{exp['neighbors']}_s{seed}"
 
-                # FIXED: Restored the automatic browser-open engine step
                 fig.show(config={
                     'toImageButtonOptions': {
                         'format': 'png', 'filename': export_filename,
@@ -266,12 +304,12 @@ def main():
                     }
                 })
 
-                # Write individual unique HTML files to Desktop directory
+                # Save unique HTML interactive files to target output_dir path structure
                 html_path = os.path.join(output_dir, f"{export_filename}.html")
                 fig.write_html(html_path, include_plotlyjs='cdn')
                 print(f"   [{current_run}/{total_runs}] Saved Grid Map -> {html_path}")
 
-    print(f"\n🎉 Pipeline Complete! Check the '{output_dir}' folder on your Desktop.")
+    print(f"\n🎉 Pipeline Complete! Plots generated inside directory:\n -> {output_dir}")
 
 if __name__ == "__main__":
     main()

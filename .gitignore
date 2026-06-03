@@ -2,3 +2,6 @@
 *.pyc
 v_jepa_env/
 .DS_Store
+
+umap_batch_results/
+vjepa_dataset.csv/
