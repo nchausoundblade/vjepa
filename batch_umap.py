@@ -4,20 +4,25 @@ import numpy as np
 import pandas as pd
 import umap
 import plotly.express as px
+
 from sklearn.manifold import trustworthiness
+from sklearn.metrics import silhouette_score, davies_bouldin_score
 
 def main():
-    # --- AUTOMATIC ARCHITECTURE DISCOVERY & PROMPT ---
+    # =========================================================================
+    # DYNAMIC CONFIGURATION, VALIDATION, AND PARSING
+    # =========================================================================
     CHECKPOINT_DIR = "/Users/noahchau/Desktop/V-JEPA/Model-Checkpoints/"
     EMBEDDINGS_DIR = "/Users/noahchau/Desktop/V-JEPA/Embeddings-and-Labels/"
     CSV_PATH = "/Users/noahchau/Desktop/V-JEPA/jepa/vjepa_dataset.csv"
-    output_dir = "/Users/noahchau/Desktop/V-JEPA/umap_batch_results"
+    OUTPUT_DIR = "/Users/noahchau/Desktop/V-JEPA/umap_batch_results"
 
-    # Map file strings exactly as they exist in your Model-Checkpoints folder
     FILENAME_TO_MODEL = {
-        "vith16-384.pth.tar": "ViT-H-384",
+        "vitl16.pth.tar": "ViT-L",
         "vith16.pth.tar": "ViT-H",
-        "vitl16.pth.tar": "ViT-L"
+        "vith16-384.pth.tar": "ViT-H-384",
+        "vitg16.pth.tar": "ViT-G",
+        "vitg16-384.pth.tar": "ViT-G-384",
     }
     
     found_checkpoints = {}
@@ -32,8 +37,6 @@ def main():
     # Dynamic fallback script guardrail
     if not VALID_MODELS:
         print(f"⚠️ Warning: Checkpoint files not detected inside {CHECKPOINT_DIR}")
-        print("Defaulting validation parameters to standard specifications.")
-        VALID_MODELS = ['ViT-L', 'ViT-H', 'ViT-H-384']
 
     print("Available V-JEPA models discovered:", ", ".join(VALID_MODELS))
     while True:
@@ -58,18 +61,6 @@ def main():
         n_samples, feature_dim = embeddings.shape
         print(f"\nLoaded {n_samples} embeddings with feature dimension size: {feature_dim}")
         
-        # Automated Native Architecture Identification Profile Engine
-        if feature_dim == 1024:
-            ARCHITECTURE = "V-JEPA (ViT-L)"
-        elif feature_dim == 1280:
-            ARCHITECTURE = "V-JEPA (ViT-H)"
-        elif feature_dim == 768:
-            ARCHITECTURE = "V-JEPA (ViT-B)"
-        else:
-            ARCHITECTURE = f"Custom-Net (Dim-{feature_dim})"
-            
-        print(f"🤖 Auto-detected Backbone Profile: {ARCHITECTURE}")
-        
     except FileNotFoundError:
         print(f"\n❌ Error: Could not find matrix records for {MODEL_TYPE}.")
         print(f"Looked for files:\n -> {embedding_file_path}\n -> {label_file_path}")
@@ -78,80 +69,56 @@ def main():
 
     # 2. Extract filenames and parse metadata
     try:
-        df_csv = pd.read_csv(CSV_PATH, sep=r'\s+|,', names=['path', 'label'], engine='python')
-        filenames = [os.path.basename(p) for p in df_csv['path']]
+        # a.  Read the CSV file 
+        df = pd.read_csv(CSV_PATH, sep=r'\s+|,', names=['path', 'label'], engine='python')
     except FileNotFoundError:
         print(f"❌ Error: Could not find dataset records at {CSV_PATH}.")
         return
 
-    diagnoses = ["Abnormal" if label == 1 else "Normal" for label in labels]
+        # b. Extract just the filename from the path for alignment with embeddings
+    filenames = df['path'].apply(os.path.basename).str.rsplit('.', n=1).str[0]
+    clean_names = filenames.str.replace(r"^cropped_", "", regex=True)
 
-    # Initialize metadata containers for all 8 components
-    studies, sweep_numbers, us_models, us_generations = [], [], [], []
-    photometrics, frame_ranges, fps_ranges, angles = [], [], [], []
+        # c. Split into a temp dataframe of 8 components
+    metadata = clean_names.str.split('_', expand=True)
+    for i in range(metadata.shape[1], 8):
+        metadata[i] = None
+    is_malformed = metadata[7].isna() | (metadata.shape[1] < 8)
+    
+        # d. Extract standard text components 
+    
+    df['Study'] = np.where(is_malformed, "Malformed_Name", metadata[0])
+    df['Sweep_Number'] = np.where(is_malformed, "Unknown", metadata[1])
+    df['US_Model'] = np.where(is_malformed, "Unknown", metadata[2])
+    df['US_Generation'] = np.where(is_malformed, "Unknown", metadata[3])
+    df['Photometric_Mode'] = np.where(is_malformed, "Unknown", metadata[4])
+    df['Angle'] = np.where(is_malformed, "Unknown", metadata[7])
+    df['Filename'] = clean_names
+    df['Diagnosis'] = ["Abnormal" if label == 1 else "Normal" for label in labels]
 
-    # 3. Parse the strict naming layout, ignoring "cropped_" if present
-    for name in filenames:
-        clean_name = os.path.splitext(name)[0]
-        
-        # FIX: Check if the filename starts with 'cropped_' and strip it off to preserve index structural alignment
-        if clean_name.startswith("cropped_"):
-            clean_name = clean_name[len("cropped_"):]
-            
-        parts = clean_name.split('_')
-        
-        if len(parts) >= 8:
-            studies.append(parts[0])         
-            sweep_numbers.append(parts[1])   
-            us_models.append(parts[2])       
-            us_generations.append(parts[3])  
-            photometrics.append(parts[4])    
-            angles.append(parts[7])          
-            
-            try:
-                raw_frames = parts[5].lower().rstrip('f')
-                frame_count = int(raw_frames)
-                if frame_count <= 50: frame_ranges.append("0-50 Frames")
-                elif frame_count <= 150: frame_ranges.append("51-150 Frames")
-                else: frame_ranges.append("151+ Frames")
-            except ValueError:
-                frame_ranges.append("Unknown Frames")
+        # E.  Numerical parsing and binning using pd.cut
+        # Handing Frames
+    frames_raw = metadata[5].str.lower().str.rstrip('f')
+    frames_num = pd.to_numeric(frames_raw, errors='coerce')
+    df['Frame_Range'] = pd.cut(
+        frames_num, 
+        bins=[-np.inf, 50, 150, np.inf], 
+        labels=["0-50 Frames", "51-150 Frames", "151+ Frames"]
+    ).astype(str).fillna("Unknown Frames")
+    df.loc[is_malformed, 'Frame_Range'] = "Unknown"
 
-            try:
-                raw_fps = parts[6].lower().replace('fps', '')
-                fps = float(raw_fps)
-                if fps <= 15: fps_ranges.append("0-15 FPS")
-                elif fps <= 30: fps_ranges.append("16-30 FPS")
-                elif fps <= 45: fps_ranges.append("31-45 FPS")
-                elif fps <= 60: fps_ranges.append("46-60 FPS")
-                else: fps_ranges.append("61+ FPS")
-            except ValueError:
-                fps_ranges.append("Unknown FPS")
-        else:
-            studies.append("Malformed_Name")
-            sweep_numbers.append("Unknown")
-            us_models.append("Unknown")
-            us_generations.append("Unknown")
-            photometrics.append("Unknown")
-            frame_ranges.append("Unknown")
-            fps_ranges.append("Unknown")
-            angles.append("Unknown")
-
-    base_df = pd.DataFrame({
-        'Filename': filenames,
-        'Diagnosis': diagnoses,
-        'Study': studies,
-        'Sweep_Number': sweep_numbers,
-        'US_Model': us_models,
-        'US_Generation': us_generations,
-        'Photometric_Mode': photometrics,
-        'Frame_Range': frame_ranges,
-        'FPS_Range': fps_ranges,
-        'Angle': angles
-    })
+        # F. Handling FPS
+    fps_raw = metadata[6].str.lower().str.replace('fps', '', case=False)
+    fps_num = pd.to_numeric(fps_raw, errors='coerce')
+    df['FPS_Range'] = pd.cut(
+        fps_num, 
+        bins=[-np.inf, 15, 30, 45, 60, np.inf], 
+        labels=["0-15 FPS", "16-30 FPS", "31-45 FPS", "46-60 FPS", "61+ FPS"]
+    ).astype(str).fillna("Unknown FPS")
+    df.loc[is_malformed, 'FPS_Range'] = "Unknown"
 
     # =========================================================================
-    # MULTI-LATENT SPACE EXPERIMENT MATRIX SPECIFICATION
+    # UMAP MAPPING ORDER 
     # =========================================================================
     experiments = [
         {
@@ -186,7 +153,7 @@ def main():
         }
     ]
 
-    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     total_runs = sum(len(exp["seeds"]) * len(exp["colors"]) for exp in experiments)
     current_run = 0
@@ -206,6 +173,11 @@ def main():
             )
             embeddings_2d = reducer.fit_transform(embeddings)
 
+            # =========================================================================
+            # HEADING STUFF
+            # =========================================================================
+            
+            # Trust score calculation 
             trust_neighbors = min(exp["neighbors"], int(len(embeddings) / 2) - 1)
             trust_score = trustworthiness(embeddings, embeddings_2d, n_neighbors=trust_neighbors)
             info_loss_pct = (1.0 - trust_score) * 100
@@ -213,25 +185,59 @@ def main():
             for color_col in exp["colors"]:
                 current_run += 1
                 
-                plot_df = base_df.copy()
+                plot_df = df.copy()
                 plot_df['UMAP X'] = embeddings_2d[:, 0]
                 plot_df['UMAP Y'] = embeddings_2d[:, 1]
 
+                # Filter out 'Unknown' or 'Malformed' strings to avoid skewing metric accuracy
+                valid_mask = ~plot_df[color_col].isin(["Unknown", "Unknown Frames", "Unknown FPS", "Malformed_Name"])
+                
+                if valid_mask.sum() > 1 and plot_df.loc[valid_mask, color_col].nunique() > 1:
+                    # Silhouette score (Higher is better)
+                    sil_score = silhouette_score( 
+                        embeddings_2d[valid_mask], 
+                        plot_df.loc[valid_mask, color_col], 
+                        metric='euclidean' # Standard spatial distance evaluation
+                    )
+                    sil_display = f"{sil_score:.3f}"
+
+                    # Davies-Bouldin Index (Lower is better)
+                    db_score = davies_bouldin_score(
+                        embeddings_2d[valid_mask], 
+                        plot_df.loc[valid_mask, color_col]
+                    )
+                    db_display = f"{db_score:.3f}"
+                else:
+                    sil_score = None
+                    sil_display = "N/A"
+                    db_display = "N/A"
+
+                # Organized terminal output block
+                print(f"   + Metric Separation [{color_col}]: Silhouette Score = {sil_display} | Davies-Bouldin = {db_display}")
+                
+
+                # Injecting the silhouette score directly into the Plotly HTML Title layout
                 umap_settings_title = (
                     f"<b>{MODEL_TYPE}</b> Latent Space Map Archetype: <b>{exp['name']}</b><br>"
-                    f"<sub><b>Colored By:</b> {color_col} | <b>n_neighbors:</b> {exp['neighbors']} | "
-                    f"<b>min_dist:</b> {exp['min_dist']} | <b>metric:</b> {exp['metric']} | <b>seed:</b> {seed}</sub><br>"
+                    f"<sub><b>Colored By:</b> {color_col} | <b>Silhouette:</b> <b>{sil_display}</b> (↑) | "
+                    f"<b>Davies-Bouldin:</b> <b>{db_display}</b> (↓)</sub><br>"
+                    f"<sub><b>n_neighbors:</b> {exp['neighbors']} | <b>min_dist:</b> {exp['min_dist']} | "
+                    f"<b>metric:</b> {exp['metric']} | <b>seed:</b> {seed}</sub><br>"
                     f"<sub><i><b>Approximate Information Loss:</b> {info_loss_pct:.1f}%</i></sub>"
                 )
 
+                # =========================================================================
+                # COLOUR CUSTOMIZATION FOR EACH CATEGORY
+                # =========================================================================
                 custom_orders = None
                 custom_color_map = None
                 
                 if color_col == 'Angle':
-                    custom_orders = {'Angle': ['RT-TRV', 'LT-TRV', 'ML-TRV', 'RT-SAG', 'LT-SAG', 'SAG', 'TBD', 'Unknown']}
+                    custom_orders = {'Angle': ['RT-TRV', 'ML-TRV', 'LT-TRV', 'RT-SAG', 'SAG', 'LT-SAG', 'TBD', 'Unknown']}
                     custom_color_map = {
                         'RT-TRV': "#08418c", 'ML-TRV': '#1f77b4','LT-TRV': '#00efff',
-                        'RT-SAG': "#ff1414", 'SAG': "#ff5f24", 'LT-SAG': '#ffaa00', 'TBD': "#000000", 'Unknown': '#bcbd22'
+                        'RT-SAG': "#ff1414", 'SAG': "#ff5f24", 'LT-SAG': '#ffaa00', 
+                        'TBD': "#000000", 'Unknown': '#bcbd22'
                     }
 
                 elif color_col == 'Diagnosis':
@@ -255,6 +261,9 @@ def main():
                         'study8': "#a830df", 'study9': "#a11d87", 'study10': "#e6759a"
                     }
 
+                # =========================================================================
+                # OTHER MAPPING SETTINGS
+                # =========================================================================     
                 fig = px.scatter(
                     plot_df, x='UMAP X', y='UMAP Y', color=color_col, hover_name='Filename',
                     hover_data=[
@@ -293,6 +302,9 @@ def main():
 
                 fig.update_traces(marker=dict(size=16, line=dict(width=1.5, color='DarkSlateGrey')))
 
+                # =========================================================================
+                # EXPORT SETTINGS
+                # =========================================================================
                 export_filename = f"{MODEL_TYPE}_{exp['name']}_grid_{color_col}_n{exp['neighbors']}_s{seed}"
 
                 fig.show(config={
@@ -305,11 +317,11 @@ def main():
                 })
 
                 # Save unique HTML interactive files to target output_dir path structure
-                html_path = os.path.join(output_dir, f"{export_filename}.html")
+                html_path = os.path.join(OUTPUT_DIR, f"{export_filename}.html")
                 fig.write_html(html_path, include_plotlyjs='cdn')
                 print(f"   [{current_run}/{total_runs}] Saved Grid Map -> {html_path}")
 
-    print(f"\n🎉 Pipeline Complete! Plots generated inside directory:\n -> {output_dir}")
+    print(f"\n🎉 Pipeline Complete! Plots generated inside directory:\n -> {OUTPUT_DIR}")
 
 if __name__ == "__main__":
     main()
